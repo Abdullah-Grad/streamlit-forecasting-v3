@@ -6,3 +6,4 @@ statsmodels
 prophet
 scikit-learn
 pulp
+openpyxl
