@@ -1,4 +1,4 @@
-# streamlit_forecast_app.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,7 +11,7 @@ from pulp import LpMinimize, LpProblem, LpVariable, lpSum, value
 
 st.set_page_config(layout='wide')
 st.markdown(
-    "<div style='text-align: center;'><img src='https://raw.githubusercontent.com/Abdullah-Grad/streamlit-forecasting-v2/main/logo.png' width='200'></div>",
+    "<div style='text-align: center;'><img src='https://raw.githubusercontent.com/Abdullah-Grad/streamlit-forecasting-v3/main/logo.png' width='200'></div>",
     unsafe_allow_html=True
 )
 st.title("📊 AI-Based Forecasting and Workforce Optimization")
