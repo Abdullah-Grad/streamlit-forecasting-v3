@@ -2,3 +2,7 @@ streamlit
 pandas
 numpy
 matplotlib
+statsmodels
+prophet
+scikit-learn
+pulp
