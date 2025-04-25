@@ -41,101 +41,85 @@ if uploaded_file:
                 df.at[index, 'Promotion'] = 1
         return df
 
-    def run_cv(initial_window):
-        n_splits = min(len(df_long) - initial_window, max(12, (len(df_long) - initial_window) // 2))
-        actuals, sarima_preds, prophet_preds, hw_preds = [], [], [], []
-        for i in range(n_splits):
-            train_end = initial_window + i
-            train = df_long.iloc[:train_end]
-            test = df_long.iloc[train_end:train_end + 1]
-            if len(test) == 0:
-                break
-            try:
-                sarima_model = SARIMAX(train['Demand'], order=(1, 1, 1), seasonal_order=(1, 1, 1, 12)).fit(disp=False)
-                sarima_forecast = sarima_model.get_forecast(steps=1).predicted_mean.values[0]
-            except:
-                sarima_forecast = 0
+    with st.spinner("📊 Running simplified cross-validation..."):
+        initial_window = 36
+        train = df_long.iloc[:initial_window]
+        test = df_long.iloc[initial_window:initial_window + 1]
+        actual = test['Demand'].values[0] if not test.empty else 0
 
-            df_prophet_train = train.reset_index().rename(columns={'Date': 'ds', 'Demand': 'y'})
-            df_prophet_train['cap'] = df_prophet_train['y'].max() * 3
-            df_prophet_train['floor'] = df_prophet_train['y'].min() * 0.5
-            df_prophet_train['company_growth'] = df_prophet_train['ds'].dt.year - 2017
-            df_prophet_train = add_promotion_factors(df_prophet_train)
+        try:
+            sarima_model_cv = SARIMAX(train['Demand'], order=(1, 1, 1), seasonal_order=(1, 1, 1, 12)).fit(disp=False)
+            sarima_pred = sarima_model_cv.get_forecast(steps=1).predicted_mean.values[0]
+        except:
+            sarima_pred = 0
 
-            model_prophet = Prophet(growth='logistic', yearly_seasonality=True,
-                                    weekly_seasonality=False, daily_seasonality=False)
-            model_prophet.add_regressor('company_growth')
-            model_prophet.add_regressor('Promotion')
-            model_prophet.fit(df_prophet_train[['ds', 'y', 'cap', 'floor', 'company_growth', 'Promotion']])
-            future = model_prophet.make_future_dataframe(periods=1, freq='MS')
-            future['cap'] = df_prophet_train['cap'].iloc[0]
-            future['floor'] = df_prophet_train['floor'].iloc[0]
-            future['company_growth'] = future['ds'].dt.year - 2017
-            future = add_promotion_factors(future)
-            prophet_forecast = model_prophet.predict(future)['yhat'].values[-1]
-
-            try:
-                hw_model = ExponentialSmoothing(train['Demand'], trend='add', seasonal='add', seasonal_periods=12).fit()
-                hw_forecast = hw_model.forecast(1).values[0]
-            except:
-                hw_forecast = train['Demand'].mean()
-
-            actuals.append(test['Demand'].values[0])
-            sarima_preds.append(sarima_forecast)
-            prophet_preds.append(prophet_forecast)
-            hw_preds.append(hw_forecast)
-
-        best_mae = float('inf')
-        best_weights = (1/3, 1/3, 1/3)
-        for w1 in np.linspace(0, 1, 21):
-            for w2 in np.linspace(0, 1 - w1, 21):
-                w3 = 1 - w1 - w2
-                blended = w1 * np.array(sarima_preds) + w2 * np.array(prophet_preds) + w3 * np.array(hw_preds)
-                mae = mean_absolute_error(actuals, blended)
-                if mae < best_mae:
-                    best_mae = mae
-                    best_weights = (w1, w2, w3)
-        return best_mae, best_weights
-
-    with st.spinner("📊 Running cross-validation and forecasting..."):
-        best_mae_global = float('inf')
-        best_initial_window = 36
-        for window in range(30, 49, 3):
-            mae, _ = run_cv(window)
-            if mae < best_mae_global:
-                best_mae_global = mae
-                best_initial_window = window
-        _, best_weights = run_cv(best_initial_window)
-        w1, w2, w3 = best_weights
-
-        sarima_model = SARIMAX(df_long['Demand'], order=(1,1,1), seasonal_order=(1,1,1,12)).fit()
-        sarima_future = sarima_model.get_forecast(steps=12).predicted_mean
-        future_index = pd.date_range(start=df_long.index[-1] + pd.DateOffset(months=1), periods=12, freq='MS')
-        sarima_future.index = future_index
-
-        df_prophet = df_long.reset_index().rename(columns={'Date': 'ds', 'Demand': 'y'})
+        df_prophet = train.reset_index().rename(columns={'Date': 'ds', 'Demand': 'y'})
         df_prophet['cap'] = df_prophet['y'].max() * 3
         df_prophet['floor'] = df_prophet['y'].min() * 0.5
         df_prophet['company_growth'] = df_prophet['ds'].dt.year - 2017
         df_prophet = add_promotion_factors(df_prophet)
 
+        model_prophet_cv = Prophet(growth='logistic', yearly_seasonality=True,
+                                   weekly_seasonality=False, daily_seasonality=False)
+        model_prophet_cv.add_regressor('company_growth')
+        model_prophet_cv.add_regressor('Promotion')
+        model_prophet_cv.fit(df_prophet[['ds', 'y', 'cap', 'floor', 'company_growth', 'Promotion']])
+
+        future = model_prophet_cv.make_future_dataframe(periods=1, freq='MS')
+        future['cap'] = df_prophet['cap'].iloc[0]
+        future['floor'] = df_prophet['floor'].iloc[0]
+        future['company_growth'] = future['ds'].dt.year - 2017
+        future = add_promotion_factors(future)
+        prophet_pred = model_prophet_cv.predict(future)['yhat'].values[-1]
+
+        try:
+            hw_model_cv = ExponentialSmoothing(train['Demand'], trend='add', seasonal='add', seasonal_periods=12).fit()
+            hw_pred = hw_model_cv.forecast(1).values[0]
+        except:
+            hw_pred = train['Demand'].mean()
+
+        best_mae = float('inf')
+        best_weights = (1/3, 1/3, 1/3)
+        for w1 in np.arange(0, 1.1, 0.1):
+            for w2 in np.arange(0, 1.1 - w1, 0.1):
+                w3 = 1 - w1 - w2
+                blended = w1 * sarima_pred + w2 * prophet_pred + w3 * hw_pred
+                mae = abs(actual - blended)
+                if mae < best_mae:
+                    best_mae = mae
+                    best_weights = (w1, w2, w3)
+
+        w1, w2, w3 = best_weights
+
+    with st.spinner("📅 Forecasting and optimization..."):
+        sarima_model = SARIMAX(df_long['Demand'], order=(1, 1, 1), seasonal_order=(1, 1, 1, 12)).fit()
+        sarima_future = sarima_model.get_forecast(steps=12).predicted_mean
+        future_index = pd.date_range(start=df_long.index[-1] + pd.DateOffset(months=1), periods=12, freq='MS')
+        sarima_future.index = future_index
+
+        df_prophet_full = df_long.reset_index().rename(columns={'Date': 'ds', 'Demand': 'y'})
+        df_prophet_full['cap'] = df_prophet_full['y'].max() * 3
+        df_prophet_full['floor'] = df_prophet_full['y'].min() * 0.5
+        df_prophet_full['company_growth'] = df_prophet_full['ds'].dt.year - 2017
+        df_prophet_full = add_promotion_factors(df_prophet_full)
+
         model_prophet = Prophet(growth='logistic', yearly_seasonality=True,
                                 weekly_seasonality=False, daily_seasonality=False)
         model_prophet.add_regressor('company_growth')
         model_prophet.add_regressor('Promotion')
-        model_prophet.fit(df_prophet[['ds', 'y', 'cap', 'floor', 'company_growth', 'Promotion']])
+        model_prophet.fit(df_prophet_full[['ds', 'y', 'cap', 'floor', 'company_growth', 'Promotion']])
         future = model_prophet.make_future_dataframe(periods=12, freq='MS')
-        future['cap'] = df_prophet['cap'].iloc[0]
-        future['floor'] = df_prophet['floor'].iloc[0]
+        future['cap'] = df_prophet_full['cap'].iloc[0]
+        future['floor'] = df_prophet_full['floor'].iloc[0]
         future['company_growth'] = future['ds'].dt.year - 2017
         future = add_promotion_factors(future)
         prophet_future = model_prophet.predict(future)['yhat'].values[-12:]
 
         hw_model_full = ExponentialSmoothing(df_long['Demand'], trend='add', seasonal='add', seasonal_periods=12).fit()
         hw_future = hw_model_full.forecast(12).values
+
         combined_forecast = w1 * sarima_future.values + w2 * prophet_future + w3 * hw_future
 
-    with st.spinner("📅 Solving workforce scheduling optimization..."):
         M, S = 12, 3
         Productivity = 23
         Cost = 8.5
@@ -214,6 +198,6 @@ if uploaded_file:
     st.subheader("🧮 Error Metrics")
     mae = mean_absolute_error(df_long['Demand'], combined_fitted_series)
     mape = mean_absolute_percentage_error(df_long['Demand'], combined_fitted_series) * 100
-    st.write(f"**Cross-Validation MAE**: {best_mae_global:.2f}")
+    st.write(f"**Cross-Validation MAE (1-Step)**: {best_mae:.2f}")
     st.write(f"**In-Sample MAE**: {mae:.2f}")
     st.write(f"**In-Sample MAPE**: {mape:.2f}%")
